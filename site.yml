@@ -1,5 +1,5 @@
 ---
-- hosts server_semaphore
+- hosts: server_semaphore
 become: true
 tasks:
   - name: Print OS info
