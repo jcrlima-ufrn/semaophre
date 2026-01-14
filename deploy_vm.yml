@@ -1,11 +1,11 @@
 - name: Deploy de VM Linux no vSphere (clone de template)
-    hosts: vcenter3.info.ufn.br
+    hosts: 
     gather_facts: false
 
   vars:
-    vcenter_hostname: 'vcenter3.info.ufrn.br'
-    vcenter_username: 'julio.lima@vcenter.local'
-    vcenter_password: 'M0r3n4@2021'
+    vcenter_hostname: ''
+    vcenter_username: ''
+    vcenter_password: ''
     validate_certs: true
     datacenter: 'SINFO'
     cluster: 'REDES'
