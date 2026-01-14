@@ -1,0 +1,150 @@
+- name: Deploy de VM Linux no vSphere (clone de template)
+    hosts: localhost
+    gather_facts: false
+
+  vars:
+    vcenter_hostname: 'vcenter3.info.ufrn.br'
+    vcenter_username: 'julio.lima@vcenter.local'
+    vcenter_password: 'M0r3n4@2021'
+    validate_certs: true
+    datacenter: 'SINFO'
+    cluster: 'REDES'
+    folder: ''
+    datastore: '3PAR_06_NL_10TB_ISOS_TEMPLATES'
+    network_name: 'DATACENTER'
+    vm_name: 'teste_semaphore'
+    template_name: 'TPL_UBUNTU_24_04'
+    vm_cpu: 2
+    vm_memory_mb: 4096
+    vm_domain: ''
+    dns_servers_csv: '10.3.158.13,10.3.158.14'
+    vm_ip: '10.3.227.52'
+    vm_netmask: '255.255.252.0'
+    vm_gateway: '10.3.224.1'
+    wait_for_ip: false
+    ip_wait_timeout: 600
+
+    dns_servers: >-
+      {{
+        (dns_servers_csv.split(',') | map('trim') | list)
+        if (dns_servers_csv | length > 0)
+        else omit
+      }}
+
+  tasks:
+    - name: Validar variáveis obrigatórias
+      ansible.builtin.assert:
+        that:
+          - vcenter_hostname | length > 0
+          - vcenter_username | length > 0
+          - vcenter_password | length > 0
+          - datacenter | length > 0
+          - cluster | length > 0
+          - folder | length > 0
+          - datastore | length > 0
+          - network_name | length > 0
+          - vm_name | length > 0
+          - template_name | length > 0
+        fail_msg: "Variáveis obrigatórias faltando no playbook gerado."
+      tags: [always]
+
+    - name: Determinar se rede será estática
+      ansible.builtin.set_fact:
+        use_static_ip: "{{ (vm_ip | length > 0) and (vm_netmask | length > 0) and (vm_gateway | length > 0) }}"
+      tags: [deploy]
+
+    - name: Clonar VM do template (rede DHCP inicialmente) e ligar
+      community.vmware.vmware_guest:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ validate_certs }}"
+
+        datacenter: "{{ datacenter }}"
+        cluster: "{{ cluster }}"
+        folder: "{{ folder }}"
+        datastore: "{{ datastore }}"
+
+        name: "{{ vm_name }}"
+        template: "{{ template_name }}"
+        state: poweredon
+
+        hardware:
+          num_cpus: "{{ vm_cpu }}"
+          memory_mb: "{{ vm_memory_mb }}"
+
+        networks:
+          - name: "{{ network_name }}"
+            type: dhcp
+            start_connected: true
+
+        customization:
+          hostname: "{{ vm_name }}"
+          domain: "{{ vm_domain | default(omit) }}"
+          dns_servers: "{{ dns_servers | default(omit) }}"
+
+        wait_for_ip_address: false
+      register: clone_result
+      tags: [deploy]
+
+    - name: Se IP estático foi informado, aplicar rede estática (requer VMware Tools no guest)
+      when: use_static_ip
+      community.vmware.vmware_guest:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ validate_certs }}"
+
+        datacenter: "{{ datacenter }}"
+        folder: "{{ folder }}"
+        name: "{{ vm_name }}"
+        state: poweredon
+
+        networks:
+          - name: "{{ network_name }}"
+            type: static
+            ip: "{{ vm_ip }}"
+            netmask: "{{ vm_netmask }}"
+            gateway: "{{ vm_gateway }}"
+            start_connected: true
+
+        customization:
+          hostname: "{{ vm_name }}"
+          domain: "{{ vm_domain | default(omit) }}"
+          dns_servers: "{{ dns_servers | default(omit) }}"
+
+        wait_for_ip_address: false
+      register: static_result
+      tags: [network]
+
+    - name: Aguardar a VM reportar um IP (opcional)
+      when: wait_for_ip
+      community.vmware.vmware_guest_info:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ validate_certs }}"
+        datacenter: "{{ datacenter }}"
+        name: "{{ vm_name }}"
+      register: vm_info
+      until: >
+        (vm_info.instance is defined) and
+        (vm_info.instance.guest is defined) and
+        (vm_info.instance.guest.ipAddress is defined) and
+        (vm_info.instance.guest.ipAddress | length > 0)
+      retries: "{{ (ip_wait_timeout // 10) | int }}"
+      delay: 10
+      tags: [wait]
+
+    - name: Resumo do deploy
+      ansible.builtin.debug:
+        msg:
+          vm: "{{ vm_name }}"
+          template: "{{ template_name }}"
+          datacenter: "{{ datacenter }}"
+          cluster: "{{ cluster }}"
+          datastore: "{{ datastore }}"
+          network: "{{ network_name }}"
+          static_ip: "{{ use_static_ip }}"
+          ip: "{{ (vm_info.instance.guest.ipAddress if (wait_for_ip | bool) else 'não aguardado') }}"
+      tags: [always]
