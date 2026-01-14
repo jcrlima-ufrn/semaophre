@@ -1,5 +1,5 @@
 - name: Deploy de VM Linux no vSphere (clone de template)
-    hosts: localhost
+    hosts: vcenter3.info.ufn.br
     gather_facts: false
 
   vars:
